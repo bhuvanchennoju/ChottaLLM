@@ -72,7 +72,7 @@ class Wikitext2:
 
 
 if __name__ == "__main__":
-    local_dir = "/n/projects/kc2819/projects/ChotaLLM/data"
+    local_dir = "../data/wikitext2"
     remote_name = "wikitext-2-raw-v1"
     shard_size = int(1e8)
 
