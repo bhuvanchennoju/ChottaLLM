@@ -2,6 +2,10 @@
 Author: Bhuvan Chennoju
 Date: 27th July 2024
 Description: This script downloads the wikitext2 data to disk. "mindchain/wikitext2"
+
+Usage:
+
+    python getData.py
 """
 
 import os
@@ -41,34 +45,41 @@ class Wikitext2:
     def download_data(self):
         wikitext = self.download()
 
+        splits = list(wikitext.keys())
         nprocs = max(1, cpu_count() // 2)
-        with Pool(nprocs) as pool:
+
+        for split in splits:
+            print(f"Size of {split} dataset: {len(wikitext[split])}")
+            
+
             shard_index = 0
             all_tokens_np = np.empty((self.shard_size,), dtype=np.uint16)
             token_count = 0
             progress_bar = None
-            for tokens in pool.imap(self.tokenize, wikitext, chunksize=16):
-                if token_count + len(tokens) < self.shard_size:
-                    all_tokens_np[token_count:token_count + len(tokens)] = tokens
-                    token_count += len(tokens)
-                    if progress_bar is None:
-                        progress_bar = tqdm(total=self.shard_size, unit="tokens", desc=f"Shard {shard_index}")
-                    progress_bar.update(len(tokens))
-                else:
-                    split = "val" if shard_index == 0 else "train"
-                    filename = os.path.join(self.DATA_CACHE_DIR, f"wikitext_{split}_{shard_index:06d}")
-                    remainder = self.shard_size - token_count
-                    progress_bar.update(remainder)
-                    all_tokens_np[token_count:token_count + remainder] = tokens[:remainder]
-                    self.write_datafile(filename, all_tokens_np)
-                    shard_index += 1
-                    progress_bar = None
-                    all_tokens_np[0:len(tokens) - remainder] = tokens[remainder:]
-                    token_count = len(tokens) - remainder
-            if token_count != 0:
-                split = "val" if shard_index == 0 else "train"
-                filename = os.path.join(self.DATA_CACHE_DIR, f"wikitext_{split}_{shard_index:06d}")
-                self.write_datafile(filename, all_tokens_np[:token_count])
+            with Pool(nprocs) as pool:
+                for tokens in pool.imap(self.tokenize, wikitext[split], chunksize=16):
+                    if token_count + len(tokens) < self.shard_size:
+                        all_tokens_np[token_count:token_count + len(tokens)] = tokens
+                        token_count += len(tokens)
+                        if progress_bar is None:
+                            progress_bar = tqdm(total=self.shard_size, unit="tokens", desc=f"Shard {shard_index}")
+                        progress_bar.update(len(tokens))
+                    else:
+                        filename = os.path.join(self.DATA_CACHE_DIR, f"{self.remote_name}_{split}_{shard_index:06d}")
+                        remainder = self.shard_size - token_count
+                        progress_bar.update(remainder)
+                        all_tokens_np[token_count:token_count + remainder] = tokens[:remainder]
+                        self.write_datafile(filename, all_tokens_np)
+                        shard_index += 1
+                        progress_bar = None
+                        all_tokens_np[0:len(tokens) - remainder] = tokens[remainder:]
+                        token_count = len(tokens) - remainder
+
+                if token_count != 0:
+                    filename = os.path.join(self.DATA_CACHE_DIR, f"{self.remote_name}_{split}_{shard_index:06d}")
+                    self.write_datafile(filename, all_tokens_np[:token_count])
+        
+
 
 
 if __name__ == "__main__":
