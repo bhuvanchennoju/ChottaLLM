@@ -1,5 +1,7 @@
 
 read2.md
-logs\*.log
-data\wikitext2\*.npy
+logs/
+data/
 
+src/gptfromscratch
+src/model2.py
