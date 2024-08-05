@@ -24,12 +24,23 @@ import torch.nn.functional as F
 
 
 class Config:
-    def __init__(self):
-        self.n_embed = 512
-        self.n_heads = 8
-        self.block_size = 64
-        self.dropout = 0.2
-        self.biased = False
+    def __init__(self,cfg):
+        if cfg:
+            self.vocab_size = cfg['vocab_size']
+            self.block_size = cfg['block_size']
+            self.n_embed = cfg['n_embed']
+            self.n_heads = cfg['n_heads']
+            self.n_layers = cfg['n_layers']
+            self.dropout = cfg['dropout']
+            self.biased = cfg['biased']
+        else:
+            self.vocab_size = 50304
+            self.block_size = 64
+            self.n_embed = 512
+            self.n_heads = 8
+            self.n_layers = 6
+            self.dropout = 0.2
+            self.biased = False
 
 
 
@@ -74,7 +85,7 @@ class CausalSelfAttention(nn.Module):
         # w = softmax(q @ k^T / sqrt(d_k)) @ v ;d_k = head_size
         # (B,T,n_heads,head_size) @ (B,n_heads,head_size,T) --> (B,n_heads,T,T)
         if self.flash:
-            w = torch.nn.functional.scaled_dot_product_attention(q,k,v, attn_mask = None, dropout = self.dropout if self.training else 0.0, is_causal = True)
+            w = torch.nn.functional.scaled_dot_product_attention(q,k,v, attn_mask = None, dropout_p = self.dropout if self.training else 0.0, is_causal = True)
         else:
             w = (q @ k.transpose(-2,-1)) / (self.head_size ** 0.5)
             w = w.masked_fill(self.mask[:T,:T] == 0, float('-inf'))
@@ -131,4 +142,75 @@ class TransformerBlock(nn.Module):
         x = x + self.ff(self.norm2(x))
         return x
     
+    
 ############################################################################################################
+    
+class Transformer(nn.Module):
+    def __init__(self,config):
+        super().__init__()
+        assert config.vocab_size is not None
+        assert config.block_size is not None
+        self.config = config
+
+        self.transformer = nn.ModuleDict(
+            dict(
+                wte = nn.Embedding(config.vocab_size,config.n_embed),
+                wpe = nn.Embedding(config.block_size,config.n_embed),
+                blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.n_layers)]),
+                dropout = nn.Dropout(config.dropout),
+                layer_norm = layer_norm(config.n_embed,config.biased),
+            )
+        )
+        self.lm_head = nn.Linear(config.n_embed,config.vocab_size, bias = config.biased) # this bisas has to be false
+        
+        # share weights between embedding and output layer
+        self.transformer['wte'].weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+
+
+        
+
+    def _init_weights(self,module):
+        if isinstance(module, nn.Linear):
+           torch.nn.init.normal_(module.weight, mean=0, std=0.02)
+           if module.bias is not None:
+               torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+           torch.nn.init.normal_(module.weight, mean=0, std=0.02)
+    
+    def forward(self,idx,targets = None):
+        device = idx.device
+        B,T = idx.size()
+
+        # making sure input size is less than or equal to block size
+        assert T <= self.config.block_size, f'input size is greater than context size {T} > {self.config.block_size}'
+
+        # get the embeddings
+        pos = torch.arange(T,device = device,dtype = torch.long) # (T,)
+
+        #embeddings
+        tok_emb = self.transformer['wte'](idx) # (B,T,C)
+        pos_emb = self.transformer['wpe'](pos) # (T,C)
+        x = tok_emb + pos_emb  # (B,T,C)
+
+        #transformer blocks
+        for block in self.transformer['blocks']:
+            x = block(x)
+
+        #layer norm
+        x = self.transformer['layer_norm'](x)
+
+        #output logits
+        if targets is not None:
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        else:
+            logits = self.lm_head(x[:,[-1],:]) # (B,1,C)
+            loss = None
+
+        return logits,loss
+                                  
+
+

@@ -17,6 +17,7 @@ import torch
 
 sys.path.append(str(Path.cwd()))
 from src.dataUtils import CustomTokenizer, CustomDataset, CustomDataloader
+from src.model import Config, Transformer
 
 seed = 2024
 np.random.seed(seed)
@@ -30,7 +31,48 @@ input_shards_path = os.path.join(DATA_dir,'wikitext2')
 logs_dir = os.path.join(WORK_dir,'logs')
 fig_dir = os.path.join(WORK_dir,'assets','images')
 
+for dir in [logs_dir,fig_dir]:
+    os.makedirs(dir,exist_ok=True)
 
-##########################################################################################
+# config for the model
+cfg_dict = {
+    'vocab_size': 50304, # vocab size for wikitext2 - gpt2 50304
+    'block_size': 128,
+    'n_embed': 64,
+    'n_layers': 1,
+    'n_heads': 2,
+    'dropout': 0.2,
+    'biased': False
+}
+
+config = Config(cfg_dict)
 
 
+######################################### Data loaders #########################################
+
+data_dir =  input_shards_path
+trn_path, val_path, tst_path = data_dir + "/wikitext-2-raw-v1_train_000000.npy", data_dir + "/wikitext-2-raw-v1_validation_000000.npy", data_dir + "/wikitext-2-raw-v1_test_000000.npy"
+
+trn_dataset = CustomDataset(trn_path)
+val_dataset = CustomDataset(val_path)
+tst_dataset = CustomDataset(tst_path)
+
+
+print(f"train dataset length: {len(trn_dataset)}")
+print(f"valid dataset length: {len(val_dataset)}")
+print(f"test dataset length: {len(tst_dataset)}")
+
+trn_loader = CustomDataloader(trn_dataset, batch_size=32, shuffle=False)
+val_loader = CustomDataloader(val_dataset, batch_size=32, shuffle=False)
+tst_loader = CustomDataloader(tst_dataset, batch_size=32, shuffle=False)
+
+######################################### Model #########################################
+
+model = Transformer(config)
+
+x,y = next(iter(trn_loader))
+
+out, loss = model(x,y)
+
+print(f"output shape: {out.shape}")
+print(f"loss: {loss}")
