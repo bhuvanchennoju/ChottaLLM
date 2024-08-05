@@ -1,69 +1,134 @@
 
 """
 Author: Bhuvan Chennoju 
-Date: 1st August 2024
+Date: 4th August 2024
 
 kudos to:
     - Karpathy's: nanogpt repo 
     https://github.com/karpathy/nanoGPT/blob/master/model.py
 
+
 """
 
-import math
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+import torch.nn.functional as F
+
+
+
+############################################################################################################
+# for a transformer model I need following components:
+# 1. MultiHeadAttention - for this autoregressive model I need to use causal self attention, like only decoder side of the transformer
+# 2. FeedForward - a simple feedforward network with 2 linear layers and relu activation
+# 3. TransformerBlock - a transformer block with multihead attention and feedforward network with layer norm and residual connections
+
+
+class Config:
+    def __init__(self):
+        self.n_embed = 512
+        self.n_heads = 8
+        self.block_size = 64
+        self.dropout = 0.2
+        self.biased = False
+
 
 
 class CausalSelfAttention(nn.Module):
+    
+    def __init__(self,config):
+        super().__init__()
+        self.n_embed = config.n_embed
+        self.n_heads = config.n_heads
+        self.block_size = config.block_size
+        self.dropout = config.dropout
+        self.biased = config.biased
+
+        # multihead size
+        assert config.n_embed % config.n_heads == 0, 'embedding dimension must be divisible by number of heads for splitting the heads in multihead attention'
+        self.head_size = config.n_embed // config.n_heads
+
+        # projections for q,k,v and output to vocab size
+        self.qkv_proj = nn.Linear(self.n_embed, 3 * self.n_embed , bias = self.biased)
+        self.out_proj = nn.Linear(self.n_embed,self.n_embed,bias = self.biased)
+        
+        # dropouts
+        self.att_dropout = nn.Dropout(self.dropout)
+        self.res_dropout = nn.Dropout(self.dropout)
+        
+        # causal mask
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') # check if the function is available
+        if not self.flash:
+            self.register_buffer('mask', torch.tril(torch.ones(self.block_size, self.block_size))).view(1, 1, self.block_size, self.block_size)
+
+    def forward(self,x):
+        B,T,C  = x.shape # batch size, context length, embedding dimension -- this is a input embedding after adding positional encoding to the input
+
+        # project the input to q,k,v
+        q,k,v = self.qkv_proj(x).split(self.n_embed, dim = 2)
+        q = q.view(B,T,self.n_heads, self.head_size).transpose(1,2) # (B,T,C) --> (B,T,n_heads,head_size) --> (B,n_heads,T,head_size)
+        k = k.view(B,T,self.n_heads, self.head_size).transpose(1,2) # (B,T,C) --> (B,T,n_heads,head_size) --> (B,n_heads,T,head_size)
+        v = v.view(B,T,self.n_heads, self.head_size).transpose(1,2) # (B,T,C) --> (B,T,n_heads,head_size) --> (B,n_heads,T,head_size)
+
+
+        # scaled dot product attention with causal mask
+        # w = softmax(q @ k^T / sqrt(d_k)) @ v ;d_k = head_size
+        # (B,T,n_heads,head_size) @ (B,n_heads,head_size,T) --> (B,n_heads,T,T)
+        if self.flash:
+            w = torch.nn.functional.scaled_dot_product_attention(q,k,v, attn_mask = None, dropout = self.dropout if self.training else 0.0, is_causal = True)
+        else:
+            w = (q @ k.transpose(-2,-1)) / (self.head_size ** 0.5)
+            w = w.masked_fill(self.mask[:T,:T] == 0, float('-inf'))
+            w = F.softmax(w,dim = -1)
+            w = self.att_dropout(w)
+            w = w @ v # (B,n_heads,T,T) @ (B,n_heads,T,head_size) --> (B,n_heads,T,head_size)
+
+        # combine the heads
+        w = w.transpose(1,2).contiguous().view(B,T,C)
+
+        # output projection
+        w = self.out_proj(w)
+        w = self.res_dropout(w)
+        return w
+
+
+class FeedForward(nn.Module):
+    def __init__(self,config):
+        super().__init__()
+        self.n_embed = config.n_embed
+        self.dropout = config.dropout
+        self.ff = nn.Sequential(
+            nn.Linear(self.n_embed,self.n_embed*4),
+            nn.GELU(),
+            nn.Linear(self.n_embed*4,self.n_embed)
+        )
+        self.dropout = nn.Dropout(self.dropout)
+
+    def forward(self,x):
+        return self.dropout(self.ff(x))
+    
+
+class layer_norm(nn.Module):
+    def __init__(self,n_embed,bias):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(n_embed))
+        self.bias = nn.Parameter(torch.zeros(n_embed)) if bias else None
+
+    def forward(self,x):
+        return F.layer_norm(x,self.weight.shape,self.weight,self.bias, 1e-5)
+
+
+class TransformerBlock(nn.Module):
 
     def __init__(self,config):
         super().__init__()
-        assert config.n_embd % config.n_head == 0 # to make sure n_embd is divisible by n_head so that the output can be concatenated
-        self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd) # 3 times the n_embd because we need q,k,v
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd) # to project the output of the attention to n_embd
-        
-        self.attn_dropout = nn.Dropout(config.attn_pdrop) # dropout for attention
-        self.resid_dropout = nn.Dropout(config.resid_pdrop) # dropout for residual connection
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
-        self.dropout = config.attn_pdrop
+        self.attn = CausalSelfAttention(config)
+        self.ff = FeedForward(config)
+        self.norm1 = layer_norm(config.n_embed,config.biased)
+        self.norm2 = layer_norm(config.n_embed,config.biased)
 
-        # flash attention parameters
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if self.flash:
-            self.flash_attention = torch.nn.functional.scaled_dot_product_attention
-        else:
-            print('Using standard attention, as flash attention is only available in PyTorch >= 2.0.0')
-            print(torch.__version__)
-            ## register buffer that will be used for the attention mask
-            self.register_buffer('bias', torch.tril(torch.ones(config.block_size, config.block_size)).view(1, 1, config.block_size, config.block_size))
-            
-    
     def forward(self,x):
-        B,T,C = x.size()  # B: batch size, T: sequence length, C: n_embd
-
-        q,k,v = self.c_attn(x).split(self.n_embd, dim = 2) # split the output of the linear layer into q,k,v
-        q = q.view(B,T,self.n_head, C//self.n_head).transpose(1,2) # reshape q to (B,n_head,T,C//n_head)
-        k = k.view(B,T,self.n_head, C//self.n_head).transpose(1,2)
-        v = v.view(B,T,self.n_head, C//self.n_head).transpose(1,2)
-
-        # flash attention (B,nh T, C//n_head) X (B,nh, C//n_head, T) -> (B,nh,T,T)
-
-        if self.flash:
-            y = self.flash_attention(q, k, v, attn_mask = None, dropout_p=self.dropout if self.training else 0, is_causal=True)
-        else:
-            att = (q @ k.transpose(-2,-1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v # (B,n_head,T,T) X (B,n_head,T,C//n_head) -> (B,n_head,T,C//n_head)
-
-        y = y.transpose(1,2).contiguous().view(B,T,C) # reshape y to (B,T,C)
-
-        y = self.resid_dropout(self.c_proj(y)) # apply residual dropout and project the output of attention to n_embd
-        return y
+        x = x + self.attn(self.norm1(x))
+        x = x + self.ff(self.norm2(x))
+        return x
     
-
-
-    class LayerNorm(nn.)
+############################################################################################################
