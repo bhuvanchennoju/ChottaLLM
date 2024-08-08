@@ -87,9 +87,9 @@ class CustomDataset:
 
         if len(labels) < self.block_size:
             labels = np.append(labels,self.data[0:self.block_size-len(labels)])
-
-        inputs_ids = tensor(inputs_ids,dtype = int64)
-        labels = tensor(labels,dtype = int64)
+        
+        # inputs_ids = tensor(inputs_ids,dtype = int64)
+        # labels = tensor(labels,dtype = int64).clone().detach()
 
         return inputs_ids,labels
     

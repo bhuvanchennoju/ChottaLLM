@@ -17,7 +17,7 @@ import torch
 
 sys.path.append(str(Path.cwd()))
 from src.dataUtils import CustomTokenizer, CustomDataset, CustomDataloader
-from src.model import Config, Transformer
+from src.model import GPTConfig, GPT
 
 seed = 2024
 np.random.seed(seed)
@@ -37,15 +37,15 @@ for dir in [logs_dir,fig_dir]:
 # config for the model
 cfg_dict = {
     'vocab_size': 50304, # vocab size for wikitext2 - gpt2 50304
-    'block_size': 128,
-    'n_embed': 64,
-    'n_layers': 1,
-    'n_heads': 2,
+    'block_size': 1024,
+    'n_embed': 768,
+    'n_layers': 12,
+    'n_heads': 12,
     'dropout': 0.2,
     'biased': False
 }
 
-config = Config(cfg_dict)
+config = GPTConfig(cfg_dict)
 
 
 ######################################### Data loaders #########################################
@@ -68,7 +68,7 @@ tst_loader = CustomDataloader(tst_dataset, batch_size=32, shuffle=False)
 
 ######################################### Model #########################################
 
-model = Transformer(config)
+model = GPT(config)
 
 x,y = next(iter(trn_loader))
 
