@@ -37,6 +37,8 @@ class GPTConfig:
             self.n_layers = cfg['n_layers']
             self.dropout = cfg['dropout']
             self.biased = cfg['biased']
+            self.casual = cfg['causal']
+            self.compile = cfg['compile']
         else:
             self.vocab_size = 50304
             self.block_size = 64
@@ -45,6 +47,8 @@ class GPTConfig:
             self.n_layers = 6
             self.dropout = 0.2
             self.biased = False
+            self.casual = True
+            self.compile = False
 
 
 
