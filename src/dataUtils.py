@@ -183,10 +183,10 @@ class DataLoaderLite:
 
     def next_batch(self):
         B,T = self.B, self.T
-        print(f"current_position: {self.current_position}")
-        print(f"len of tokens: {len(self.tokens)}")
-        print(f"current shard: {self.current_shard}")
-        print(B,T)
+        # print(f"current_position: {self.current_position}")
+        # print(f"len of tokens: {len(self.tokens)}")
+        # print(f"current shard: {self.current_shard}")
+        # print(B,T)
         buf = self.tokens[self.current_position:self.current_position + B*T + 1]
         x = (buf[:-1]).view(B, T) # inputs
         y = (buf[1:]).view(B, T) # targets
