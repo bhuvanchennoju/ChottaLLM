@@ -185,8 +185,6 @@ class GPT(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
-
-
     def _init_weights(self,module):
         if isinstance(module, nn.Linear):
            std =0.02
