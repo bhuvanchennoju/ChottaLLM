@@ -95,7 +95,7 @@ def train(model, train_loader,
          lr_scheduler, max_steps, 
          grad_accum_steps, device, 
          device_type, ddp, master_process,
-         log_file):
+         log_file, config, ddp_world_size, ddp_rank, destroy_process_group, enc):
     
     for step in range(max_steps):
         t0 = time.time()

@@ -37,6 +37,10 @@ if torch.cuda.is_available():
 torch.set_float32_matmul_precision('high') # use float32 matmul precision for better performance
 
 ######################################### CONFIG  #########################################
+logging.basicConfig(level=logging.INFO)
+logging.info(f"torch version: {torch.__version__}")
+
+
 WORK_dir = ''
 DATA_dir =  os.path.join(WORK_dir, 'data')
 SRC_dir = os.path.join(WORK_dir, 'src')
@@ -53,6 +57,12 @@ B =  64
 T = 1024
 
 enc = CustomTokenizer() # tokenizer
+
+
+logging.info(f"total_batch_size: {total_batch_size}")
+logging.info(f"B: {B}")
+logging.info(f"T: {T}")
+
 #########################################  World setting   #########################################
 
 
@@ -75,17 +85,16 @@ else:
     master_process = True
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-
-print(f"ddp: {ddp}")
-print(f"ddp_rank: {ddp_rank}")
-print(f"ddp_world_size: {ddp_world_size}")
-print(f"ddp_local_rank: {ddp_local_rank}")
-print(f"master_process: {master_process}")
+device_type = torch.float32 if device == 'cuda' else torch.float32
 
 
-device_type = "cuda" if device.startswith('cuda') else "cpu"
-print(f"device: {device}")
-print(f"device_type: {device_type}")
+logging.info(f"device: {device}")
+logging.info(f"ddp: {ddp}")
+logging.info(f"ddp_rank: {ddp_rank}")
+logging.info(f"ddp_world_size: {ddp_world_size}")
+logging.info(f"ddp_local_rank: {ddp_local_rank}")
+logging.info(f"master_process: {master_process}")
+
 
 
 ######################################### Data loaders #########################################
@@ -96,8 +105,8 @@ assert total_batch_size % (B * T * ddp_world_size) == 0, "total batch size must 
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 
 if master_process:
-    print(f"grad_accum_steps: {grad_accum_steps}")
-    print( f"total batch size: {total_batch_size}")
+    logging.info(f"grad_accum_steps: {grad_accum_steps}")
+    logging.info(f"total_batch_size: {total_batch_size}")
 
 train_loader = DataLoaderLite(B = B, T = T, 
                               process_rank = ddp_rank, 
@@ -127,6 +136,9 @@ cfg_dict = {
     
 }
 
+logging.info(f"config: {cfg_dict}")
+
+
 config = GPTConfig(cfg_dict)
 model = GPT(config=config)
 model.to(device)
@@ -137,6 +149,7 @@ if ddp:
 
 if config.compile and device == "cuda":
     model = torch.compile(model)
+    logging.info("model compiled")
 
 
 raw_model = model.module if ddp else model
@@ -152,20 +165,19 @@ lr_scheduler = LearningRateScheduler(max_lr, min_lr, warmup_steps, max_steps)
 optimizer = raw_model.configure_optimizers(lr_rate=max_lr, wt_decay=0.1, betas=(0.9, 0.95), eps=1e-8, device_type = device_type)
 
 
-
-######################################### Logging ################################################
-
-log_dir = os.path.join(logs_dir, f"run_{ddp_rank}")
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"log.txt")
-with open(log_file, "w") as f: 
-    pass
-
 ########################################## TRAINING #########################################
 
 
-
-
+from src.train import train
+logging.info("starting training")
+train(model, train_loader,
+       valid_loader, optimizer, 
+       lr_scheduler, max_steps, 
+       grad_accum_steps, device,
+       device_type, ddp, master_process,
+       os.path.join(logs_dir, "log.txt"), 
+       config, ddp_world_size,
+       ddp_rank, destroy_process_group, enc)
 
 
 
