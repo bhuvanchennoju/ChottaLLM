@@ -21,12 +21,12 @@ from src.dataUtils import CustomTokenizer, CustomDataset, CustomDataloader, Data
 from src.utils import LearningRateScheduler
 from src.model import GPTConfig, GPT
 
-from torch.distributed import init_process_group,destroy_process_group
+
 from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
+from src.utils import setup_ddp
 
 
-
+######################################### SEEDS  #########################################
 
 seed = 2024
 np.random.seed(seed)
@@ -67,29 +67,20 @@ logging.info(f"T: {T}")
 
 
 
-ddp = int(os.environ.get('RANK',-1)) != -1 # check if the process is distributed
-if ddp:
-    assert torch.cuda.is_available(), "Distributed training requires CUDA"
-    init_process_group(backend='nccl')
-    ddp_rank = int(os.environ['RANK'])
-    ddp_world_size = int(os.environ['WORLD_SIZE'])
-    ddp_local_rank = int(os.environ['LOCAL_RANK'])
-    device = f'cuda:{ddp_local_rank}'
-    torch.cuda.set_device(device)
-    master_process = ddp_rank == 0 # for logging and saving checkpoints
+ddp = int(os.environ.get('RANK',-1)) != -1 
+ddp_config = {
+    'rank': int(os.environ.get('RANK',0)),
+    'world_size': int(os.environ.get('WORLD_SIZE',1)),
+    'local_rank': int(os.environ.get('LOCAL_RANK',0))
+}
 
-else:
-    ddp_rank = 0
-    ddp_world_size = 1
-    ddp_local_rank = 0
-    master_process = True
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+ddp_rank, ddp_world_size, ddp_local_rank, device = setup_ddp(ddp,ddp_config)
 
-device_type = torch.float32 if device == 'cuda' else torch.float32
+device_type = "cuda" if device.startswith("cuda") else "cpu"
+master_process = ddp_rank == 0
 
-
-logging.info(f"device: {device}")
 logging.info(f"ddp: {ddp}")
+logging.info(f"device: {device}")
 logging.info(f"ddp_rank: {ddp_rank}")
 logging.info(f"ddp_world_size: {ddp_world_size}")
 logging.info(f"ddp_local_rank: {ddp_local_rank}")
@@ -170,14 +161,6 @@ optimizer = raw_model.configure_optimizers(lr_rate=max_lr, wt_decay=0.1, betas=(
 
 from src.train import train
 logging.info("starting training")
-train(model, train_loader,
-       valid_loader, optimizer, 
-       lr_scheduler, max_steps, 
-       grad_accum_steps, device,
-       device_type, ddp, master_process,
-       os.path.join(logs_dir, "log.txt"), 
-       config, ddp_world_size,
-       ddp_rank, destroy_process_group, enc)
 
 
 

@@ -137,7 +137,7 @@ class CustomDataloader:
             inputs = pad_sequence(inputs,batch_first=True,padding_value = 0)
             labels = pad_sequence(labels,batch_first=True,padding_value = -100) # just to ensure the padding is not considered in the loss calculation
 
-        return inputs,labels
+        return inputs,labels # B x T
     
     def __len__(self):
         return len(self.dataset) // self.batch_size
@@ -145,7 +145,7 @@ class CustomDataloader:
 
 def load_tokens(filename):
     npt = np.load(filename)
-    npt = npt.astype(np.int32) # added after video
+    npt = npt.astype(np.int32) 
     ptt = tensor(npt, dtype=long)
     return ptt
 
@@ -183,20 +183,118 @@ class DataLoaderLite:
 
     def next_batch(self):
         B,T = self.B, self.T
-        # print(f"current_position: {self.current_position}")
-        # print(f"len of tokens: {len(self.tokens)}")
-        # print(f"current shard: {self.current_shard}")
-        # print(B,T)
         buf = self.tokens[self.current_position:self.current_position + B*T + 1]
         x = (buf[:-1]).view(B, T) # inputs
         y = (buf[1:]).view(B, T) # targets
-        # advance the position in the tensor
+
         self.current_position += B * T * self.num_processes
-        # if loading the next batch would be out of bounds, advance to next shard
         if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
             self.current_shard = (self.current_shard + 1) % len(self.shards)
             self.tokens = load_tokens(self.shards[self.current_shard])
             self.current_position = B * T * self.process_rank
-        return x, y
+        return x, y # B x T
 
+
+
+import os
+import numpy as np
+import torch
+from torch import tensor, stack, long
+from torch.nn.utils.rnn import pad_sequence
+
+class ShardDataset:
+    def __init__(self, data_dir, block_size=128, file_extension='.npy', split='train'):
+        self.data_dir = data_dir
+        self.block_size = block_size
+        self.file_extension = file_extension
+        self.split = split
+        self.shards = self._load_shards()
+        self.current_shard_idx = 0
+        self.data = self._load_data()
+
+    def _load_shards(self):
+        shards = [os.path.join(self.data_dir, f) for f in os.listdir(self.data_dir) if f.endswith(self.file_extension) and self.split in f]
+        shards.sort()
+        assert len(shards) > 0, f"No shards found in directory {self.data_dir} for split {self.split}."
+        return shards
+
+    def _load_data(self):
+        data = np.load(self.shards[self.current_shard_idx])
+        if data.dtype == np.int16:
+            data = data.astype(np.int32)
+        data = tensor(data, dtype=long)
+        return data
+
+    def _next_shard(self):
+        self.current_shard_idx = (self.current_shard_idx + 1) % len(self.shards)
+        self.data = self._load_data()
+
+    def __len__(self):
+        return sum(len(np.load(shard)) for shard in self.shards) // self.block_size
+
+    def __getitem__(self, idx):
+        shard_size = len(self.data) // self.block_size
+        while idx >= shard_size:
+            idx -= shard_size
+            self._next_shard()
+            shard_size = len(self.data) // self.block_size
+        
+        start_idx = idx * self.block_size
+        end_idx = start_idx + self.block_size if start_idx + self.block_size < len(self.data) else len(self.data)
+        inputs_ids = self.data[start_idx:end_idx]
+        labels = self.data[start_idx + 1:end_idx + 1]
+
+        if len(labels) < self.block_size:
+            labels = torch.cat((labels, self.data[:self.block_size - len(labels)]))
+
+        return inputs_ids, labels
+
+
+class ShardDataloader:
+    def __init__(self, dataset: ShardDataset, batch_size=64, shuffle=True, pad=False):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.pad = pad
+        self.idxis = np.arange(len(self.dataset))
+
+        if self.shuffle:
+            np.random.shuffle(self.idxis)
+        self.str_idx = 0
+
+    def __iter__(self):
+        self.str_idx = 0
+        if self.shuffle:
+            np.random.shuffle(self.idxis)
+        return self
+
+    def __next__(self):
+        if self.str_idx >= len(self.idxis):
+            raise StopIteration
+
+        end_idx = min(self.str_idx + self.batch_size, len(self.idxis))
+        batch_idxis = self.idxis[self.str_idx:end_idx]
+        self.str_idx = end_idx
+
+        batch = [self.dataset[i] for i in batch_idxis]
+        inputs, labels = zip(*batch)
+        inputs = stack(inputs)
+        labels = stack(labels)
+
+        if self.pad:
+            inputs = pad_sequence(inputs, batch_first=True, padding_value=0)
+            labels = pad_sequence(labels, batch_first=True, padding_value=-100)
+
+        return inputs, labels
+
+    def __len__(self):
+        return len(self.dataset) // self.batch_size
+
+# # Example usage
+# if __name__ == "__main__":
+#     dataset = ShardDataset(data_dir='/path/to/data', block_size=128, split='train')
+#     dataloader = ShardDataloader(dataset, batch_size=32, shuffle=True)
+
+#     for batch_idx, (inputs, labels) in enumerate(dataloader):
+#         print(f"Batch {batch_idx}: {inputs.shape}, {labels.shape}")
 

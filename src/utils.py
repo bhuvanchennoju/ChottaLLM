@@ -31,4 +31,39 @@ class LearningRateScheduler:
                title='Learning rate schedule')
         fig.savefig("lr_schedule.png")
 
-     
+
+
+from torch.distributed import init_process_group,destroy_process_group
+import torch.distributed as dist
+import torch
+
+def setup_ddp(ddp_flag,ddp_config):
+    if ddp_flag:
+        if torch.cuda.is_available():
+            assert torch.cuda.is_available(), "Distributed training requires CUDA"
+            assert ddp_config['world_size'] > 1, "Distributed training requires at least 2 processes"
+            assert ddp_config['rank'] >= 0, "Rank must be non-negative"
+            assert ddp_config['rank'] < ddp_config['world_size'], "Rank must be smaller than world_size"
+
+            init_process_group(backend='nccl')
+            ddp_rank = ddp_config['rank']
+            ddp_world_size = ddp_config['world_size']
+            ddp_local_rank = ddp_config['local_rank']
+            device = f'cuda:{ddp_local_rank}'
+            torch.cuda.set_device(device)
+
+        else:
+            print("CUDA is not available. Exiting.")
+            exit()
+    else:
+        ddp_rank = 0
+        ddp_world_size = 1
+        ddp_local_rank = 0
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    return ddp_rank, ddp_world_size, ddp_local_rank, device
+
+
+def cleanup_ddp(ddp_flag):
+    if ddp_flag:
+        destroy_process_group()

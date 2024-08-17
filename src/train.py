@@ -1,24 +1,43 @@
 """
 Authored by: Bhuvan Chennoju
-Created on: 21st July 2024
-
-Kudos to:
-    - Karpathy's: https://github.com/karpathy/build-nanogpt?tab=readme-ov-file
-    - Video: https://www.youtube.com/watch?v=kCc8FmEb1nY&t=784s
-
-this is a simple train, and validation loop for the bigram model.
+Created on: 13th August 2024
 
 """
-import torch
-import logging
-
-
+import os
 import time
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+import logging
 
-def evaluate(model, valid_loader, device, device_type, ddp, master_process, log_file, step, last_step):
+
+def train_step(model, train_loader, optimizer, device, ddp, grad_accum_steps = None):
+    model.train()
+    optimizer.zero_grad()
+    loss_accum = 0.0
+    for _ in range(grad_accum_steps):
+        x, y = train_loader.next_batch() # B x T 
+        x, y = x.to(device), y.to(device)
+        if ddp:
+            model.require_backward_grad_sync = True
+        _, loss = model(x, y)
+
+        if grad_accum_steps is not None:
+            loss = loss / grad_accum_steps
+        loss_accum += loss.detach()
+        loss.backward()
+
+    if ddp:
+        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    return loss_accum.item(), norm
+
+def evaluate(model, valid_loader, device, )
+
+
+
+
+def evaluate(model, valid_loader, device, device_type, ddp, master_process, step, last_step,model_dir): 
     model.eval()
     valid_loader.reset()
     with torch.no_grad():
@@ -34,11 +53,14 @@ def evaluate(model, valid_loader, device, device_type, ddp, master_process, log_
     if ddp:
         dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
     if master_process:
-        print(f"validation loss: {val_loss_accum.item():.4f}")
-        with open(log_file, "a") as f:
-            f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+        # print(f"validation loss: {val_loss_accum.item():.4f}")
+        # with open(log_file, "a") as f:
+        #     f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+        logging.info(f"validation loss: {val_loss_accum.item():.4f}")
+        logging.info(f"{step} val {val_loss_accum.item():.4f}\n")
+
         if step > 0 and (step % 5000 == 0 or last_step):
-            checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+            checkpoint_path = os.path.join(model_dir, f"model_{step:05d}.pt")
             checkpoint = {
                 'model': model.state_dict(),
                 'config': model.config,
@@ -47,7 +69,7 @@ def evaluate(model, valid_loader, device, device_type, ddp, master_process, log_
             }
             torch.save(checkpoint, checkpoint_path)
 
-def generate_samples(model, enc, device, ddp_rank, config):
+def generate_samples(model, enc, device, ddp_rank, device_type):
     model.eval()
     num_return_sequences = 4
     max_length = 32
@@ -72,23 +94,7 @@ def generate_samples(model, enc, device, ddp_rank, config):
         decoded = enc.decode(tokens)
         print(f"rank {ddp_rank} sample {i}: {decoded}")
 
-def train_step(model, train_loader, optimizer, device, ddp, grad_accum_steps):
-    model.train()
-    optimizer.zero_grad()
-    loss_accum = 0.0
-    for micro_step in range(grad_accum_steps):
-        x, y = train_loader.next_batch()
-        x, y = x.to(device), y.to(device)
-        if ddp:
-            model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
-        logits, loss = model(x, y)
-        loss = loss / grad_accum_steps
-        loss_accum += loss.detach()
-        loss.backward()
-    if ddp:
-        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    return loss_accum, norm
+
 
 def train(model, train_loader,
          valid_loader, optimizer, 
@@ -120,9 +126,12 @@ def train(model, train_loader,
         tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
         tokens_per_sec = tokens_processed / dt
         if master_process:
-            print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-            with open(log_file, "a") as f:
-                f.write(f"{step} train {loss_accum.item():.6f}\n")
+            # print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+            # with open(log_file, "a") as f:
+            #     f.write(f"{step} train {loss_accum.item():.6f}\n")
+
+            logging.info(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+            logging.info(f"{step} train {loss_accum.item():.6f}\n")
 
     if ddp:
         destroy_process_group()
