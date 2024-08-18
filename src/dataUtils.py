@@ -230,7 +230,7 @@ class ShardDataset:
         self.data = self._load_data()
 
     def __len__(self):
-        return sum(len(np.load(shard)) for shard in self.shards) // self.block_size
+        return sum(len(np.load(shard)) for shard in self.shards) // self.block_size ## this is not efficient way to calculate the length
 
     def __getitem__(self, idx):
         shard_size = len(self.data) // self.block_size
