@@ -163,7 +163,7 @@ from torch import distributed as dist
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
-
+from torch.nn import functional as F
 
 logging.info("starting training")
 
@@ -227,12 +227,8 @@ for step in range(max_steps):
             with torch.no_grad():
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits, loss = model(xgen) # (B, T, vocab_size)
-                # take the logits at the last position
                 logits = logits[:, -1, :] # (B, vocab_size)
-                # get the probabilities
                 probs = F.softmax(logits, dim=-1)
-                # do top-k sampling of 50 (huggingface pipeline default)
-                # topk_probs here becomes (5, 50), topk_indices is (5, 50)
                 topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
                 # select a token from the top-k probabilities
                 # note: multinomial does not demand the input to sum to 1
