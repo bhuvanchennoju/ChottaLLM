@@ -257,11 +257,6 @@ for step in range(max_steps):
             
         logits, loss = model(x, y)
         print(f"loss: {loss}")  
-        
-        # we have to scale the loss to account for gradient accumulation,
-        # because the gradients just add on each successive backward().
-        # addition of gradients corresponds to a SUM in the objective, but
-        # instead of a SUM we want MEAN. Scale the loss here so it comes out right
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
         loss.backward()
