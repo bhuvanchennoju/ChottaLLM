@@ -28,5 +28,6 @@ conda activate torchdev
 
 
 if [[ ${SLURM_ARRAY_TASK_ID} == 1 ]] ; then
-    python -m torchrun --nproc_per_node=1 src/runmodel.py
+    # python -m torchrun --nproc_per_node=1 src/runmodel.py
+    python src/runmodel.py
 fi
